@@ -52,12 +52,16 @@ const makeId = () =>
     : `${Date.now()}-${Math.random()}`;
 
 function normalizeGrade(value: string) {
-  return value.trim().toUpperCase().replace(/[−–—]/g, '-').replace(/＋/g, '+');
+  const normalized = value.trim().toUpperCase().replace(/[−–—]/g, '-').replace(/＋/g, '+');
+  if (normalized === '合格' || normalized === '通过') return 'P';
+  if (normalized === '免修') return 'EX';
+  if (normalized === '在修') return 'IP';
+  return normalized;
 }
 
 function parseGrade(value: string): { score: number | null; excluded: boolean } {
   const normalized = normalizeGrade(value);
-  if (normalized === 'EX' || normalized === 'P') return { score: null, excluded: true };
+  if (normalized === 'EX' || normalized === 'P' || normalized === 'IP') return { score: null, excluded: true };
   if (normalized in LETTER_SCORES) return { score: LETTER_SCORES[normalized], excluded: false };
   const score = Number(normalized);
   if (normalized !== '' && Number.isFinite(score) && score >= 0 && score <= 100) {
@@ -84,7 +88,7 @@ function level(score: number) {
 }
 
 function parseOcrText(text: string): Course[] {
-  const letterSet = new Set([...Object.keys(LETTER_SCORES), 'EX', 'P']);
+  const letterSet = new Set([...Object.keys(LETTER_SCORES), 'EX', 'P', 'IP']);
   return text
     .split(/\r?\n/)
     .map((line) => line.replace(/[|｜,，]/g, ' ').replace(/\s+/g, ' ').trim())
@@ -125,6 +129,39 @@ function parseOcrText(text: string): Course[] {
         grade: normalizeGrade(tokens[gradeIndex].replace(/[;；:：]$/, '')),
       }];
     });
+}
+
+function prepareImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!/^image\/(?:jpeg|png|webp|gif)$/i.test(file.type) || file.size > 20 * 1024 * 1024) {
+      reject(new Error('请选择不超过 20 MB 的 JPEG、PNG、WebP 或 GIF 图片。'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('图片读取失败。'));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error('图片格式无法读取。'));
+      image.onload = () => {
+        const maxSide = 2400;
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext('2d');
+        if (!context) {
+          reject(new Error('浏览器无法处理此图片。'));
+          return;
+        }
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.9));
+      };
+      image.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function ParticleField() {
@@ -224,7 +261,7 @@ export default function Home() {
   const [courses, setCourses] = useState<Course[]>(DEFAULT_COURSES);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [ocrText, setOcrText] = useState('');
-  const [ocrStatus, setOcrStatus] = useState('可上传成绩单截图，或直接粘贴识别文本。');
+  const [ocrStatus, setOcrStatus] = useState('可上传成绩单截图交给 DeepSeek 识别，或直接粘贴课程文本。');
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrBusy, setOcrBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -273,29 +310,35 @@ export default function Home() {
     setTimeout(() => document.querySelector<HTMLInputElement>('tbody tr:last-child input')?.focus(), 0);
   };
 
-  const handleImage = async (file?: File) => {
-    if (!file) return;
+  const handleImage = async (files?: FileList | File[]) => {
+    const selected = files ? Array.from(files).slice(0, 6) : [];
+    if (!selected.length) return;
     setOcrOpen(true);
     setOcrBusy(true);
-    setOcrProgress(0);
-    setOcrStatus('正在载入本地识别引擎…');
+    setOcrProgress(10);
+    setOcrStatus(`正在压缩 ${selected.length} 张图片…`);
     try {
-      const { recognize } = await import('tesseract.js');
-      const result = await recognize(file, 'chi_sim+eng', {
-        logger: (message: { status: string; progress: number }) => {
-          if (message.status === 'recognizing text') {
-            setOcrProgress(Math.round((message.progress || 0) * 100));
-            setOcrStatus(`正在辨认课程与成绩… ${Math.round((message.progress || 0) * 100)}%`);
-          } else {
-            setOcrStatus('正在准备识别引擎…');
-          }
-        },
+      const images = await Promise.all(selected.map(prepareImage));
+      setOcrProgress(55);
+      setOcrStatus('DeepSeek 正在辨认并整理课程…');
+      const response = await fetch('/api/recognize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images }),
       });
-      setOcrText(result.data.text);
-      const count = parseOcrText(result.data.text).length;
-      setOcrStatus(count ? `初步找到 ${count} 门课程，请核对文本后导入。` : '已完成识别，但未匹配到课程行；可编辑文本后重试。');
-    } catch {
-      setOcrStatus('识别没有完成。请换一张更清晰、裁切更紧的截图，或直接粘贴文本。');
+      const result = (await response.json()) as {
+        error?: string;
+        courses?: Array<{ name: string; credit: number; grade: string }>;
+        warnings?: string[];
+      };
+      if (!response.ok || !result.courses?.length) throw new Error(result.error || '没有识别到课程。');
+      setOcrProgress(100);
+      setOcrText(result.courses.map((course) => `${course.name} ${course.credit} ${course.grade}`).join('\n'));
+      const warning = result.warnings?.length ? `；${result.warnings.join('；')}` : '';
+      setOcrStatus(`已识别 ${result.courses.length} 门课程，请核对后导入${warning}`);
+    } catch (error) {
+      setOcrProgress(0);
+      setOcrStatus(error instanceof Error ? error.message : '识别没有完成，请重试或改用文字粘贴。');
     } finally {
       setOcrBusy(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -329,7 +372,7 @@ export default function Home() {
         </div>
         <div className="privacy-pill">
           <Sparkles className="size-3.5 text-[#a73c2c]" />
-          <span className="hidden sm:inline">成绩与图片仅在本机处理</span><span className="sm:hidden">本机处理</span>
+          <span className="hidden sm:inline">成绩本机保存 · 图片经 DeepSeek 识别</span><span className="sm:hidden">DeepSeek 识图</span>
         </div>
       </header>
 
@@ -376,8 +419,8 @@ export default function Home() {
               <p className="mt-1 text-xs text-[#66817c]">已计入 {metrics.credits.toFixed(1)} 学分 · 修改即重算 · 自动保存在本机</p>
             </div>
             <div className="flex gap-2">
-              <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(event) => handleImage(event.target.files?.[0])} />
-              <Button variant="outline" className="ink-button" onClick={() => fileRef.current?.click()}><Camera />识图导入</Button>
+              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple className="sr-only" onChange={(event) => handleImage(event.target.files || undefined)} />
+              <Button variant="outline" className="ink-button" onClick={() => setOcrOpen(true)}><Camera />智能导入</Button>
               <Button className="cinnabar-button" onClick={addCourse}><Plus />添一门课</Button>
             </div>
           </div>
@@ -415,7 +458,7 @@ export default function Home() {
           )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#294f47]/10 pt-4">
-            <div className="flex items-center gap-2 text-xs text-[#607b75]"><Info className="size-3.5" />EX / P 排除；低于 60 分的抛物线绩点记为 0</div>
+            <div className="flex items-center gap-2 text-xs text-[#607b75]"><Info className="size-3.5" />EX / P / IP 排除；低于 60 分的抛物线绩点记为 0</div>
             <Button variant="ghost" size="sm" className="text-[#718781]" onClick={() => setCourses(DEFAULT_COURSES)}><RotateCcw />恢复示例</Button>
           </div>
         </section>
@@ -439,15 +482,15 @@ export default function Home() {
       <Dialog open={ocrOpen} onOpenChange={setOcrOpen}>
         <DialogContent className="ocr-dialog max-h-[88vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="font-serif-cn text-xl tracking-[0.08em]">识图入卷</DialogTitle>
-            <DialogDescription>图片不会上传到服务器；浏览器会下载文字识别模型，并在本机完成辨认。</DialogDescription>
+            <DialogTitle className="font-serif-cn text-xl tracking-[0.08em]">智能入卷</DialogTitle>
+            <DialogDescription>上传图片会发送至 DeepSeek API 进行识别，本站不作持久存储；也可以只粘贴文字。</DialogDescription>
           </DialogHeader>
-          <button type="button" className="upload-zone" onClick={() => fileRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); handleImage(event.dataTransfer.files?.[0]); }}>
-            <UploadCloud className="size-6" /><span>{ocrBusy ? '识别进行中，请稍候' : '选择或拖入成绩单截图'}</span><small>建议先裁掉无关区域，让课程名、学分、成绩清晰可见</small>
+          <button type="button" className="upload-zone" onClick={() => fileRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); handleImage(event.dataTransfer.files); }}>
+            <UploadCloud className="size-6" /><span>{ocrBusy ? 'DeepSeek 识别进行中，请稍候' : '选择或拖入成绩单截图（最多 6 张）'}</span><small>建议裁掉无关区域；发送前会压缩，识别结果仍需人工核对</small>
           </button>
           {ocrBusy && <div className="progress-track"><span style={{ width: `${Math.max(4, ocrProgress)}%` }} /></div>}
           <p className="ocr-status">{ocrStatus}</p>
-          <Textarea value={ocrText} onChange={(event) => setOcrText(event.target.value)} placeholder={'也可粘贴文字，每行格式示例：\n高等数学 5 93\n程序设计实习 3 A-\n体育 1 P'} className="min-h-52 border-[#31574f]/15 bg-white/40 font-mono text-xs leading-6" />
+          <Textarea value={ocrText} onChange={(event) => setOcrText(event.target.value)} placeholder={'也可直接粘贴文字，每行格式示例：\n高等数学 5 93\n程序设计实习 3 A-\n体育 1 P'} className="min-h-52 border-[#31574f]/15 bg-white/40 font-mono text-xs leading-6" />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-[11px] text-[#718781]">导入会替换当前课程；导入后仍可逐项修改。</p>
             <Button onClick={importOcr} disabled={ocrBusy || !ocrText.trim()} className="cinnabar-button"><Check />核对后导入</Button>
