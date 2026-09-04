@@ -7,7 +7,7 @@ import {
   Calculator,
   Camera,
   Check,
-  Home,
+  House,
   ImagePlus,
   Info,
   LayoutDashboard,
@@ -735,9 +735,8 @@ export default function Home() {
 
       <aside className="jump-sidebar" aria-label="页面目录">
         <a className="jump-home" href="https://flowwalker.github.io/">
-          <span className="jump-home-box"><Home /></span>
+          <span className="jump-home-box"><House /></span>
           <span className="jump-home-text"><strong>返回主站</strong><small>flowwalker.github.io</small></span>
-          <span className="jump-home-arrow"><ArrowUpRight /></span>
         </a>
         <div className="jump-card">
           <div className="jump-card-title"><span>目</span><div><strong>卷内导航</strong><small>PAGE INDEX</small></div></div>
