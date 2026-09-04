@@ -535,16 +535,7 @@ export default function Home() {
           })}
         </div>
 
-        <section className={`calculation-console ${isCalculating ? 'is-calculating' : ''} ${hasPendingChanges ? 'has-pending' : 'is-ready'}`} aria-label="绩点演算">
-          <div className="calculation-copy">
-            <span>CALCULATION RITE</span>
-            <strong>{isCalculating ? '三式汇流，正在演算' : hasPendingChanges ? '卷面已有修改，等待演算' : '本轮演算已经完成'}</strong>
-            <small>{hasPendingChanges ? '上方结果暂时保持不变' : `已纳入 ${displayMetrics.credits.toFixed(1)} 学分`}</small>
-          </div>
-          <button type="button" className="calculation-knob" onClick={runCalculation} disabled={isCalculating} aria-label="开始计算绩点">
-            <span className="knob-ring" aria-hidden="true" />
-            <span className="knob-core"><Calculator /><b>{isCalculating ? '演算中' : '计算'}</b></span>
-          </button>
+        <section className={`charge-console ${hasPendingChanges ? 'has-pending' : 'is-ready'}`} aria-label="计算充能状态">
           <div className="charge-module" aria-live="polite">
             <div className="charge-meta"><span>能量注入</span><strong>{Math.round(charge)}%</strong></div>
             <div className="charge-track"><span style={{ width: `${charge}%` }} /></div>
@@ -600,6 +591,21 @@ export default function Home() {
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#294f47]/10 pt-4">
             <div className="flex items-center gap-2 text-xs text-[#607b75]"><Info className="size-3.5" />EX / P / IP 排除；低于 60 分的抛物线绩点记为 0</div>
             <Button variant="ghost" size="sm" disabled={isCalculating} className="text-[#718781]" onClick={() => { setCharge(0); setCourses(DEFAULT_COURSES); }}><RotateCcw />恢复示例</Button>
+          </div>
+          <div className={`calculation-dock ${isCalculating ? 'is-calculating' : ''} ${hasPendingChanges ? 'has-pending' : 'is-ready'}`}>
+            <div className="calculation-copy">
+              <span>CALCULATION RITE</span>
+              <strong>{isCalculating ? '三式汇流，正在演算' : hasPendingChanges ? '卷面已有修改，等待演算' : '本轮演算已经完成'}</strong>
+              <small>{hasPendingChanges ? '上方结果暂时保持不变' : `已纳入 ${displayMetrics.credits.toFixed(1)} 学分`}</small>
+            </div>
+            <button type="button" className="calculation-knob" onClick={runCalculation} disabled={isCalculating} aria-label="开始计算绩点">
+              <span className="knob-ring" aria-hidden="true" />
+              <span className="knob-core"><Calculator /><b>{isCalculating ? '演算中' : '计算'}</b></span>
+            </button>
+            <div className="calculation-guidance">
+              <strong>{hasPendingChanges ? '转动旋钮，落定三式结果' : '仍可再次演算'}</strong>
+              <small>输入与结果彼此分离，由你决定何时更新</small>
+            </div>
           </div>
         </section>
 
