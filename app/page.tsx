@@ -385,13 +385,15 @@ export default function Home() {
     const snapshot = courses.map((course) => ({ ...course }));
     const from = displayMetrics;
     const target = calculateMetrics(snapshot);
-    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 80 : 620;
-    const startedAt = performance.now();
+    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 80 : 1100;
+    let startedAt: number | null = null;
     const keys: Array<keyof Metrics> = ['credits', 'weightedScore', 'g1', 'g2', 'g3', 'g2Inverse'];
     setIsCalculating(true);
     setCharge(0);
+    window.scrollTo({ top: 0, behavior: 'auto' });
 
     const animate = (now: number) => {
+      if (startedAt === null) startedAt = now;
       const progress = Math.min(1, (now - startedAt) / duration);
       const convergence = progress === 1 ? 1 : 1 - Math.exp(-5.5 * progress) * Math.cos(11 * progress);
       const next = { ...from };
@@ -535,10 +537,10 @@ export default function Home() {
           })}
         </div>
 
-        <section className={`charge-console ${hasPendingChanges ? 'has-pending' : 'is-ready'}`} aria-label="计算充能状态">
+        <section className={`charge-console ${isCalculating ? 'is-calculating' : ''} ${hasPendingChanges ? 'has-pending' : 'is-ready'}`} aria-label="计算充能状态">
           <div className="charge-module" aria-live="polite">
             <div className="charge-meta"><span>能量注入</span><strong>{Math.round(charge)}%</strong></div>
-            <div className="charge-track"><span style={{ width: `${charge}%` }} /></div>
+            <div className="charge-track" role="progressbar" aria-label="计算进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(charge)}><span style={{ width: `${charge}%` }} /></div>
             <small>{isCalculating ? '数字正在收敛' : charge === 100 ? '结果稳定' : '等待启动旋钮'}</small>
           </div>
         </section>
