@@ -357,8 +357,12 @@ export default function Home() {
     const target = document.getElementById(id);
     if (!target) return;
     setActiveSection(id);
-    target.scrollIntoView({ behavior: 'smooth', block: id === 'overview' ? 'start' : 'center' });
     window.history.replaceState(null, '', `#${id}`);
+    if (id === 'overview') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const handleImage = async (files?: FileList | File[]) => {
