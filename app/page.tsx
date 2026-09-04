@@ -46,6 +46,24 @@ const PROVIDER_NAMES: Record<string, string> = {
   siliconflow: '硅基流动',
 };
 
+const PROVIDER_ENDPOINTS: Record<string, string> = {
+  deepseek: 'https://api.deepseek.com/chat/completions',
+  openai: 'https://api.openai.com/v1/chat/completions',
+  siliconflow: 'https://api.siliconflow.cn/v1/chat/completions',
+};
+
+const VISION_PROMPT = [
+  '你是大学成绩单结构化识别器。请读取用户提供的全部截图，只提取真实可见的课程行。',
+  '必须只输出一个 JSON 对象，不要输出 Markdown、解释或代码围栏。',
+  '格式：{"courses":[{"name":"课程名","credit":3,"grade":"92"}],"warnings":["无法确认的内容"]}',
+  '规则：',
+  '1. name 保留完整课程名；credit 必须是数字；grade 必须是字符串。',
+  '2. 数字成绩保留小数；A+、A、A-、B+、B、B-、C+、C、C-、D+、D、F 原样保留。',
+  '3. “合格”或“通过”统一写成 P；“免修”统一写成 EX；IP 或在修统一写成 IP。',
+  '4. 不要把学期标题、课程性质、页面按钮、时间、电量等识别成课程。',
+  '5. 多张截图有重叠课程时去重；看不清就写入 warnings，不得猜测。',
+].join('\n');
+
 const PAGE_SECTIONS = [
   { id: 'overview', label: '绩点总览', note: '三种算法结果', icon: LayoutDashboard },
   { id: 'courses', label: '课程卷', note: '填写成绩与学分', icon: Table2 },
@@ -205,6 +223,30 @@ function prepareImage(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function cleanModelJson(content: string) {
+  return content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+}
+
+function parseVisionCourses(content: string) {
+  const parsed = JSON.parse(cleanModelJson(content)) as {
+    courses?: Array<{ name?: unknown; credit?: unknown; grade?: unknown }>;
+    warnings?: unknown[];
+  };
+  const courses = (Array.isArray(parsed.courses) ? parsed.courses : [])
+    .slice(0, 100)
+    .flatMap((course) => {
+      const name = typeof course.name === 'string' ? course.name.trim() : '';
+      const credit = Number(course.credit);
+      const grade = String(course.grade ?? '').trim().toUpperCase();
+      if (!name || !Number.isFinite(credit) || credit <= 0 || credit > 20 || !grade) return [];
+      return [{ name, credit, grade }];
+    });
+  const warnings = (Array.isArray(parsed.warnings) ? parsed.warnings : [])
+    .filter((value): value is string => typeof value === 'string')
+    .slice(0, 10);
+  return { courses, warnings };
 }
 
 function ParticleField() {
@@ -434,27 +476,60 @@ export default function Home() {
     setOcrProgress(10);
     setOcrStatus(`正在压缩 ${selected.length} 张图片…`);
     try {
+      const providerName = PROVIDER_NAMES[aiProvider] || 'AI 服务';
+      const endpoint = PROVIDER_ENDPOINTS[aiProvider];
+      const suppliedApiKey = apiKey.trim();
+      if (!endpoint) throw new Error('暂不支持这个 AI 厂家。');
+      if (!suppliedApiKey) throw new Error(`请先填写 ${providerName} API Key。`);
       const images = await Promise.all(selected.map(prepareImage));
       setOcrProgress(55);
-      setOcrStatus(`${PROVIDER_NAMES[aiProvider]} 正在辨认并整理课程…`);
-      const response = await fetch('/api/recognize', {
+      setOcrStatus(`${providerName} 正在辨认并整理课程…`);
+      const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images, provider: aiProvider, model: visionModel.trim(), apiKey: apiKey.trim() }),
+        headers: {
+          Authorization: `Bearer ${suppliedApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: visionModel.trim() || PROVIDER_DEFAULT_MODELS[aiProvider],
+          temperature: 0,
+          max_tokens: 4000,
+          response_format: { type: 'json_object' },
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: VISION_PROMPT },
+              ...images.map((image) => ({ type: 'image_url', image_url: { url: image, detail: 'original' } })),
+            ],
+          }],
+        }),
       });
-      const result = (await response.json()) as {
-        error?: string;
-        courses?: Array<{ name: string; credit: number; grade: string }>;
-        warnings?: string[];
+      const payload = (await response.json()) as {
+        error?: { message?: string };
+        choices?: Array<{ message?: { content?: string } }>;
       };
-      if (!response.ok || !result.courses?.length) throw new Error(result.error || '没有识别到课程。');
+      if (!response.ok) {
+        const message = response.status === 429
+          ? `${providerName} 当前请求较多，请稍后重试。`
+          : response.status === 401 || response.status === 403
+            ? `${providerName} API Key 无效或无权调用该视觉模型。`
+            : payload.error?.message || `${providerName} 识别服务暂时不可用。`;
+        throw new Error(message);
+      }
+      const content = payload.choices?.[0]?.message?.content;
+      if (!content) throw new Error(`${providerName} 没有返回可解析的结果。`);
+      const result = parseVisionCourses(content);
+      if (!result.courses.length) throw new Error('模型没有识别到完整的课程、学分与成绩，请换一张更清晰的截图。');
       setOcrProgress(100);
       setOcrText(result.courses.map((course) => `${course.name} ${course.credit} ${course.grade}`).join('\n'));
-      const warning = result.warnings?.length ? `；${result.warnings.join('；')}` : '';
+      const warning = result.warnings.length ? `；${result.warnings.join('；')}` : '';
       setOcrStatus(`已识别 ${result.courses.length} 门课程，请核对后导入${warning}`);
     } catch (error) {
       setOcrProgress(0);
-      setOcrStatus(error instanceof Error ? error.message : '识别没有完成，请重试或改用文字粘贴。');
+      const message = error instanceof TypeError
+        ? '浏览器未能直连所选 AI 厂家，请检查网络或改用 DeepSeek。'
+        : error instanceof Error ? error.message : '识别没有完成，请重试或改用文字粘贴。';
+      setOcrStatus(message);
     } finally {
       setOcrBusy(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -729,9 +804,9 @@ export default function Home() {
                 <Input id="api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-••••••••••••" className="ai-input font-mono" />
               </div>
             </div>
-            <p className="secret-note">API Key 仅用于本次页面中的识别请求，不会写入浏览器本机存储。</p>
+            <p className="secret-note">API Key 仅在当前页面内存中使用，由浏览器直连所选 AI 厂家，不会发送给本站或写入本机存储。</p>
             <button type="button" disabled={ocrBusy || !visionModel.trim()} className="upload-zone" onClick={() => fileRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); handleImage(event.dataTransfer.files); }}>
-              <UploadCloud className="size-6" /><span>{ocrBusy ? `${PROVIDER_NAMES[aiProvider]} 识别进行中，请稍候` : '粘贴、选择或拖入成绩单截图（最多 6 张）'}</span><small>建议裁掉无关区域；图片发送前会压缩，本站不作持久存储</small>
+              <UploadCloud className="size-6" /><span>{ocrBusy ? `${PROVIDER_NAMES[aiProvider]} 识别进行中，请稍候` : '粘贴、选择或拖入成绩单截图（最多 6 张）'}</span><small>建议裁掉无关区域；图片压缩后由浏览器直接发往所选 AI 厂家</small>
             </button>
             {ocrBusy && <div className="progress-track"><span style={{ width: `${Math.max(4, ocrProgress)}%` }} /></div>}
           </section>
