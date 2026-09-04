@@ -1,8 +1,29 @@
 export const runtime = 'edge';
 
-const MODEL = 'deepseek-v4-flash-vision-exp';
+const PROVIDERS = {
+  deepseek: {
+    name: 'DeepSeek',
+    endpoint: 'https://api.deepseek.com/chat/completions',
+    envKey: 'DEEPSEEK_API_KEY',
+    defaultModel: 'deepseek-v4-flash-vision-exp',
+  },
+  openai: {
+    name: 'OpenAI',
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+    envKey: 'OPENAI_API_KEY',
+    defaultModel: 'gpt-4.1-mini',
+  },
+  siliconflow: {
+    name: '硅基流动',
+    endpoint: 'https://api.siliconflow.cn/v1/chat/completions',
+    envKey: 'SILICONFLOW_API_KEY',
+    defaultModel: 'Qwen/Qwen2.5-VL-72B-Instruct',
+  },
+} as const;
 const MAX_BODY_BYTES = 24 * 1024 * 1024;
 const MAX_IMAGES = 6;
+
+type ProviderId = keyof typeof PROVIDERS;
 
 type ModelCourse = {
   name?: unknown;
@@ -25,15 +46,26 @@ export async function POST(request: Request) {
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > MAX_BODY_BYTES) return json({ error: '图片总大小过大，请减少图片或重新裁切。' }, 413);
 
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return json({ error: '站点尚未配置 DeepSeek API 密钥。' }, 503);
-
   let images: unknown;
+  let provider: unknown;
+  let requestedModel: unknown;
+  let suppliedApiKey: unknown;
   try {
-    ({ images } = await request.json());
+    ({ images, provider, model: requestedModel, apiKey: suppliedApiKey } = await request.json());
   } catch {
     return json({ error: '请求内容无法读取。' }, 400);
   }
+
+  const providerId = (typeof provider === 'string' ? provider : 'deepseek') as ProviderId;
+  const providerConfig = PROVIDERS[providerId];
+  if (!providerConfig) return json({ error: '暂不支持这个 AI 厂家。' }, 400);
+  const model = typeof requestedModel === 'string' && requestedModel.trim()
+    ? requestedModel.trim()
+    : providerConfig.defaultModel;
+  if (model.length > 160) return json({ error: '视觉模型名称过长。' }, 400);
+  const browserApiKey = typeof suppliedApiKey === 'string' ? suppliedApiKey.trim() : '';
+  const apiKey = browserApiKey || process.env[providerConfig.envKey];
+  if (!apiKey) return json({ error: `请填写 ${providerConfig.name} API Key。` }, 400);
 
   if (!Array.isArray(images) || images.length === 0 || images.length > MAX_IMAGES) {
     return json({ error: `请选择 1–${MAX_IMAGES} 张成绩截图。` }, 400);
@@ -62,14 +94,14 @@ export async function POST(request: Request) {
       '5. 多张截图有重叠课程时去重；看不清就写入 warnings，不得猜测。',
     ].join('\n');
 
-    const response = await fetch('https://api.deepseek.com/chat/completions', {
+    const response = await fetch(providerConfig.endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         temperature: 0,
         max_tokens: 4000,
         response_format: { type: 'json_object' },
@@ -95,15 +127,15 @@ export async function POST(request: Request) {
     };
     if (!response.ok) {
       const message = response.status === 429
-        ? 'DeepSeek 当前请求较多，请稍后重试。'
+        ? `${providerConfig.name} 当前请求较多，请稍后重试。`
         : response.status === 401 || response.status === 403
-          ? 'DeepSeek API 密钥无效或无权调用视觉模型。'
-          : payload.error?.message || 'DeepSeek 识别服务暂时不可用。';
+          ? `${providerConfig.name} API Key 无效或无权调用该视觉模型。`
+          : payload.error?.message || `${providerConfig.name} 识别服务暂时不可用。`;
       return json({ error: message }, response.status >= 500 ? 502 : response.status);
     }
 
     const content = payload.choices?.[0]?.message?.content;
-    if (!content) return json({ error: 'DeepSeek 没有返回可解析的结果。' }, 502);
+    if (!content) return json({ error: `${providerConfig.name} 没有返回可解析的结果。` }, 502);
 
     const parsed = JSON.parse(cleanModelJson(content)) as {
       courses?: ModelCourse[];
@@ -123,7 +155,7 @@ export async function POST(request: Request) {
       .slice(0, 10);
 
     if (!courses.length) return json({ error: '模型没有识别到完整的课程、学分与成绩，请换一张更清晰的截图。', warnings }, 422);
-    return json({ courses, warnings, model: MODEL });
+    return json({ courses, warnings, model, provider: providerId });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       return json({ error: '识别超过 90 秒，请稍后重试。' }, 504);

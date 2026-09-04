@@ -96,6 +96,7 @@ body::before {
 .score-number { margin-top: 2px; font-family: ui-serif, Georgia, serif; font-size: clamp(2.7rem,5vw,4.15rem); line-height: .9; letter-spacing: -.065em; color: #153c35; font-variant-numeric: tabular-nums; }
 .paper-panel { border: 1px solid rgba(35,75,67,.13); border-radius: 26px; background: rgba(249,247,238,.72); padding: clamp(18px,3vw,30px); box-shadow: 0 24px 70px rgba(38,60,54,.09); backdrop-filter: blur(20px); }
 .privacy-pill { display: flex; align-items: center; gap: 8px; border: 1px solid rgba(36,76,68,.12); border-radius: 999px; background: rgba(255,255,255,.4); padding: 7px 12px; font-size: 12px; color: #52716b; backdrop-filter: blur(18px); }
+.hero-title { white-space: nowrap; }
 .ink-button { border-color: rgba(35,75,67,.19)!important; background: rgba(255,255,255,.38)!important; color: #294d46!important; }
 .cinnabar-button { background: #9e3e2f!important; color: #fff8ee!important; box-shadow: 0 8px 24px rgba(158,62,47,.18); }
 .course-row td { background: rgba(255,255,255,.32); padding: 4px 8px; border-top: 1px solid rgba(35,75,67,.07); border-bottom: 1px solid rgba(35,75,67,.07); }
@@ -126,8 +127,19 @@ body::before {
 .threshold-panel i { height: 1px; background: linear-gradient(90deg, rgba(41,83,74,.28), transparent); }
 .threshold-panel strong { color: #56716a; font-size: 11px; font-weight: 500; }
 .ocr-dialog { border: 1px solid rgba(40,78,69,.16)!important; background: rgba(245,244,235,.96)!important; box-shadow: 0 34px 100px rgba(24,50,44,.24)!important; backdrop-filter: blur(24px); }
+.import-section { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid rgba(40,78,69,.1); padding-top: 16px; }
+.section-heading { display: flex; align-items: center; gap: 10px; }
+.section-heading h2 { font-family: "Songti SC", "STSong", serif; font-size: 17px; letter-spacing: .12em; color: #244a43; }
+.section-heading p { margin-top: 2px; color: #768b86; font-size: 10px; }
+.section-number { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(44,91,82,.18); border-radius: 50%; color: #8f3f31; font-family: "Songti SC", serif; font-size: 11px; }
+.ai-config-grid { display: grid; grid-template-columns: .8fr 1.25fr 1.15fr; gap: 12px; }
+.field-group { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.field-group label { color: #52716b; font-size: 11px; font-weight: 500; letter-spacing: .06em; }
+.ai-input, .field-group [data-slot="native-select"] { height: 36px!important; border-color: rgba(49,87,79,.15)!important; background: rgba(255,255,255,.38)!important; color: #294d46!important; }
+.secret-note { margin-top: -4px; color: #7b908b; font-size: 10px; line-height: 1.55; }
 .upload-zone { display: flex; width: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 7px; border: 1px dashed rgba(42,87,77,.28); border-radius: 16px; background: rgba(255,255,255,.3); padding: 22px; color: #3d6a60; transition: background .2s ease, border-color .2s ease; }
 .upload-zone:hover { border-color: rgba(154,58,42,.38); background: rgba(255,255,255,.48); }
+.upload-zone:disabled { cursor: not-allowed; opacity: .58; }
 .upload-zone span { font-size: 13px; }
 .upload-zone small { color: #7b908b; font-size: 10px; }
 .progress-track { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(45,91,80,.1); }
@@ -135,10 +147,13 @@ body::before {
 .ocr-status { color: #617a74; font-size: 11px; }
 @keyframes float-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 640px) {
+  .hero-title { white-space: normal; }
   .result-card { min-height: 158px; }
   .score-number { font-size: 3.2rem; }
   .formula-panel { grid-template-columns: 1fr; }
   .formula-panel p { grid-column: 1; }
   .course-row td { padding-inline: 4px; }
+  .ai-config-grid { grid-template-columns: 1fr; }
+  .privacy-pill { max-width: 132px; }
 }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration: .01ms!important; animation-iteration-count: 1!important; scroll-behavior: auto!important; } }

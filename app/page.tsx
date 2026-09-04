@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
@@ -24,6 +26,18 @@ import {
 } from '@/components/ui/dialog';
 
 type Course = { id: string; name: string; credit: string; grade: string };
+
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
+  deepseek: 'deepseek-v4-flash-vision-exp',
+  openai: 'gpt-4.1-mini',
+  siliconflow: 'Qwen/Qwen2.5-VL-72B-Instruct',
+};
+
+const PROVIDER_NAMES: Record<string, string> = {
+  deepseek: 'DeepSeek',
+  openai: 'OpenAI',
+  siliconflow: '硅基流动',
+};
 
 const LETTER_SCORES: Record<string, number> = {
   'A+': 100,
@@ -264,6 +278,9 @@ export default function Home() {
   const [ocrStatus, setOcrStatus] = useState('可上传成绩单截图交给 DeepSeek 识别，或直接粘贴课程文本。');
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [aiProvider, setAiProvider] = useState('deepseek');
+  const [visionModel, setVisionModel] = useState(PROVIDER_DEFAULT_MODELS.deepseek);
+  const [apiKey, setApiKey] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -320,11 +337,11 @@ export default function Home() {
     try {
       const images = await Promise.all(selected.map(prepareImage));
       setOcrProgress(55);
-      setOcrStatus('DeepSeek 正在辨认并整理课程…');
+      setOcrStatus(`${PROVIDER_NAMES[aiProvider]} 正在辨认并整理课程…`);
       const response = await fetch('/api/recognize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images }),
+        body: JSON.stringify({ images, provider: aiProvider, model: visionModel.trim(), apiKey: apiKey.trim() }),
       });
       const result = (await response.json()) as {
         error?: string;
@@ -372,14 +389,14 @@ export default function Home() {
         </div>
         <div className="privacy-pill">
           <Sparkles className="size-3.5 text-[#a73c2c]" />
-          <span className="hidden sm:inline">成绩本机保存 · 图片经 DeepSeek 识别</span><span className="sm:hidden">DeepSeek 识图</span>
+          <span className="hidden sm:inline">可粘贴文字或自行填入 AI API Key 进行识图</span><span className="sm:hidden">文字 / AI 识图</span>
         </div>
       </header>
 
       <section className="relative z-10 mx-auto w-[min(1180px,calc(100%-32px))]">
-        <div className="mb-7 max-w-3xl">
+        <div className="mb-7">
           <p className="mb-2 font-serif-cn text-sm tracking-[0.32em] text-[#9a3a2a]">观分 · 知止 · 再进</p>
-          <h1 className="font-serif-cn text-[clamp(2.35rem,6vw,5.7rem)] leading-[0.96] tracking-[-0.035em] text-[#102a26]">
+          <h1 className="hero-title font-serif-cn text-[clamp(2.35rem,6vw,5.7rem)] leading-[0.96] tracking-[-0.035em] text-[#102a26]">
             一纸成绩，<span className="text-[#2c5b52]">三重观照</span>
           </h1>
         </div>
@@ -480,17 +497,72 @@ export default function Home() {
       </section>
 
       <Dialog open={ocrOpen} onOpenChange={setOcrOpen}>
-        <DialogContent className="ocr-dialog max-h-[88vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent
+          className="ocr-dialog max-h-[90vh] overflow-y-auto sm:max-w-3xl"
+          onPaste={(event) => {
+            const pastedImages = Array.from(event.clipboardData.items)
+              .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+              .map((item) => item.getAsFile())
+              .filter((file): file is File => file !== null);
+            if (pastedImages.length) {
+              event.preventDefault();
+              handleImage(pastedImages);
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="font-serif-cn text-xl tracking-[0.08em]">智能入卷</DialogTitle>
-            <DialogDescription>上传图片会发送至 DeepSeek API 进行识别，本站不作持久存储；也可以只粘贴文字。</DialogDescription>
+            <DialogDescription>可任选识图或识文导入；识别结果请在导入前人工核对。</DialogDescription>
           </DialogHeader>
-          <button type="button" className="upload-zone" onClick={() => fileRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); handleImage(event.dataTransfer.files); }}>
-            <UploadCloud className="size-6" /><span>{ocrBusy ? 'DeepSeek 识别进行中，请稍候' : '选择或拖入成绩单截图（最多 6 张）'}</span><small>建议裁掉无关区域；发送前会压缩，识别结果仍需人工核对</small>
-          </button>
-          {ocrBusy && <div className="progress-track"><span style={{ width: `${Math.max(4, ocrProgress)}%` }} /></div>}
+
+          <section className="import-section" aria-labelledby="image-import-title">
+            <div className="section-heading">
+              <span className="section-number">壹</span>
+              <div><h2 id="image-import-title">识图</h2><p>配置视觉模型，再粘贴、选择或拖入成绩单图片。</p></div>
+            </div>
+            <div className="ai-config-grid">
+              <div className="field-group">
+                <Label htmlFor="ai-provider">AI 厂家</Label>
+                <NativeSelect
+                  id="ai-provider"
+                  value={aiProvider}
+                  onChange={(event) => {
+                    const provider = event.target.value;
+                    setAiProvider(provider);
+                    setVisionModel(PROVIDER_DEFAULT_MODELS[provider]);
+                  }}
+                  className="w-full"
+                >
+                  <NativeSelectOption value="deepseek">DeepSeek（默认）</NativeSelectOption>
+                  <NativeSelectOption value="openai">OpenAI</NativeSelectOption>
+                  <NativeSelectOption value="siliconflow">硅基流动</NativeSelectOption>
+                </NativeSelect>
+              </div>
+              <div className="field-group">
+                <Label htmlFor="vision-model">视觉模型</Label>
+                <Input id="vision-model" value={visionModel} onChange={(event) => setVisionModel(event.target.value)} placeholder="输入视觉模型名称" className="ai-input" />
+              </div>
+              <div className="field-group field-group-key">
+                <Label htmlFor="api-key">API Key</Label>
+                <Input id="api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-••••••••••••" className="ai-input font-mono" />
+              </div>
+            </div>
+            <p className="secret-note">API Key 仅用于本次页面中的识别请求，不会写入浏览器本机存储。</p>
+            <button type="button" disabled={ocrBusy || !visionModel.trim()} className="upload-zone" onClick={() => fileRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); handleImage(event.dataTransfer.files); }}>
+              <UploadCloud className="size-6" /><span>{ocrBusy ? `${PROVIDER_NAMES[aiProvider]} 识别进行中，请稍候` : '粘贴、选择或拖入成绩单截图（最多 6 张）'}</span><small>建议裁掉无关区域；图片发送前会压缩，本站不作持久存储</small>
+            </button>
+            {ocrBusy && <div className="progress-track"><span style={{ width: `${Math.max(4, ocrProgress)}%` }} /></div>}
+          </section>
+
+          <section className="import-section" aria-labelledby="text-import-title">
+            <div className="section-heading">
+              <span className="section-number">贰</span>
+              <div><h2 id="text-import-title">识文</h2><p>直接粘贴已复制的课程文字，不需要 API。</p></div>
+            </div>
+            <Textarea value={ocrText} onChange={(event) => setOcrText(event.target.value)} placeholder={'每行格式示例：\n高等数学 5 93\n程序设计实习 3 A-\n体育 1 P'} className="min-h-44 border-[#31574f]/15 bg-white/40 font-mono text-xs leading-6" />
+          </section>
+
           <p className="ocr-status">{ocrStatus}</p>
-          <Textarea value={ocrText} onChange={(event) => setOcrText(event.target.value)} placeholder={'也可直接粘贴文字，每行格式示例：\n高等数学 5 93\n程序设计实习 3 A-\n体育 1 P'} className="min-h-52 border-[#31574f]/15 bg-white/40 font-mono text-xs leading-6" />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-[11px] text-[#718781]">导入会替换当前课程；导入后仍可逐项修改。</p>
             <Button onClick={importOcr} disabled={ocrBusy || !ocrText.trim()} className="cinnabar-button"><Check />核对后导入</Button>
