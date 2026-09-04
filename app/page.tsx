@@ -2,13 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BookOpen,
+  Calculator,
   Camera,
   Check,
   ImagePlus,
   Info,
+  LayoutDashboard,
   Plus,
   RotateCcw,
+  Scale,
   Sparkles,
+  Table2,
+  Target,
   Trash2,
   UploadCloud,
 } from 'lucide-react';
@@ -40,9 +46,9 @@ const PROVIDER_NAMES: Record<string, string> = {
 };
 
 const PAGE_SECTIONS = [
-  { id: 'overview', label: '绩点总览', note: '三种算法结果' },
-  { id: 'courses', label: '课程卷', note: '填写成绩与学分' },
-  { id: 'rules', label: '换算标准', note: '公式、等级与优秀线' },
+  { id: 'overview', label: '绩点总览', note: '三种算法结果', icon: LayoutDashboard },
+  { id: 'courses', label: '课程卷', note: '填写成绩与学分', icon: Table2 },
+  { id: 'rules', label: '换算标准', note: '公式、等级与优秀线', icon: Scale },
 ];
 
 const LETTER_SCORES: Record<string, number> = {
@@ -307,7 +313,7 @@ export default function Home() {
     const updateActiveSection = () => {
       const current = PAGE_SECTIONS
         .map((section) => ({ id: section.id, top: document.getElementById(section.id)?.getBoundingClientRect().top ?? Infinity }))
-        .filter((section) => section.top <= 180)
+        .filter((section) => section.top <= window.innerHeight * 0.45)
         .at(-1);
       setActiveSection(current?.id ?? PAGE_SECTIONS[0].id);
     };
@@ -345,6 +351,14 @@ export default function Home() {
   const addCourse = () => {
     setCourses((current) => [...current, { id: makeId(), name: '', credit: '', grade: '' }]);
     setTimeout(() => document.querySelector<HTMLInputElement>('tbody tr:last-child input')?.focus(), 0);
+  };
+
+  const jumpToSection = (id: string) => {
+    const target = document.getElementById(id);
+    if (!target) return;
+    setActiveSection(id);
+    target.scrollIntoView({ behavior: 'smooth', block: id === 'overview' ? 'start' : 'center' });
+    window.history.replaceState(null, '', `#${id}`);
   };
 
   const handleImage = async (files?: FileList | File[]) => {
@@ -423,9 +437,10 @@ export default function Home() {
         </div>
 
         <nav className="mobile-jump-nav" aria-label="页面快捷导航">
-          {PAGE_SECTIONS.map((section) => (
-            <a key={section.id} href={`#${section.id}`} className={activeSection === section.id ? 'active' : ''}>{section.label}</a>
-          ))}
+          {PAGE_SECTIONS.map((section) => {
+            const Icon = section.icon;
+            return <a key={section.id} href={`#${section.id}`} onClick={(event) => { event.preventDefault(); jumpToSection(section.id); }} className={activeSection === section.id ? 'active' : ''}><Icon />{section.label}</a>;
+          })}
         </nav>
 
         <div id="overview" className="jump-target grid gap-4 md:grid-cols-3" aria-live="polite">
@@ -507,32 +522,64 @@ export default function Home() {
           </div>
         </section>
 
-        <section id="rules" className="jump-target mt-5 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-          <div className="formula-panel">
-            <div><span>线性换算</span><strong>G₁ = x̄ / 25</strong></div>
-            <div><span>抛物线换算</span><strong>G(x) = 4 − 3(x−100)² / 1600</strong></div>
-            <p>G₂ 对每门课程先应用 G(x) 再按学分平均；G₃ 先求加权均分 x̄，再应用 G(x)。</p>
+        <section id="rules" className="jump-target rules-panel mt-5">
+          <header className="rules-header">
+            <div className="rules-heading-icon"><BookOpen /></div>
+            <div><p className="font-serif-cn">换算标准</p><span>三种口径，同一份成绩的不同观察方式</span></div>
+            <code>G(x) = 4 − 3(x−100)² / 1600</code>
+          </header>
+
+          <div className="rule-cards">
+            <article className="rule-card">
+              <div className="rule-icon"><Calculator /></div><span className="rule-mark">G₁</span>
+              <h3>加权平均绩点</h3><strong>x̄ ÷ 25</strong>
+              <p>先按学分求百分制加权均分，再线性压缩到 4.00 制。</p>
+            </article>
+            <article className="rule-card featured">
+              <div className="rule-icon"><Table2 /></div><span className="rule-mark">G₂</span>
+              <h3>逐科抛物线加权</h3><strong>Σ cᵢG(xᵢ) ÷ Σ cᵢ</strong>
+              <p>每门课先换成抛物线绩点，再按学分平均；另显示反函数等效分。</p>
+            </article>
+            <article className="rule-card">
+              <div className="rule-icon"><Scale /></div><span className="rule-mark">G₃</span>
+              <h3>均分后抛物线</h3><strong>G(Σ cᵢxᵢ ÷ Σ cᵢ)</strong>
+              <p>先求百分制加权均分，再整体代入抛物线函数。</p>
+            </article>
           </div>
-          <div className="threshold-panel">
-            {[{ score: 85, label: '客观优秀' }, { score: 90, label: '主观优秀' }, { score: 95, label: '极度满意' }].map((item) => (
-              <div key={item.score}><span>{item.score}</span><i /><strong>{item.label}</strong></div>
-            ))}
+
+          <div className="standards-grid">
+            <div className="threshold-panel">
+              <div className="standards-title"><Target /><span><strong>优秀刻度</strong><small>成绩评价参考线</small></span></div>
+              {[{ score: 85, label: '客观优秀' }, { score: 90, label: '主观优秀' }, { score: 95, label: '极度满意' }].map((item) => (
+                <div className="threshold-row" key={item.score}><span>{item.score}</span><i /><strong>{item.label}</strong></div>
+              ))}
+            </div>
+            <div className="letter-panel">
+              <div className="standards-title"><BookOpen /><span><strong>等级折算</strong><small>等级制课程先换为百分制</small></span></div>
+              <div className="grade-scale">
+                {[['A+/A/A−', '100'], ['B+', '85'], ['B', '81'], ['B−', '77'], ['C+', '73'], ['C', '70'], ['C−', '67'], ['D+', '64'], ['D', '62'], ['F', '0']].map(([grade, score]) => (
+                  <span key={grade}><b>{grade}</b><em>{score}</em></span>
+                ))}
+              </div>
+              <p><Info />EX 免修、P 通过和 IP 在修不计入绩点；低于 60 分的抛物线绩点记为 0。</p>
+            </div>
           </div>
         </section>
-
-        <p className="mt-6 text-center text-[11px] tracking-[0.1em] text-[#6f8580]">等级：A+/A/A− 100 · B+ 85 · B 81 · B− 77 · C+ 73 · C 70 · C− 67 · D+ 64 · D 62 · F 0</p>
       </section>
 
       <aside className="jump-sidebar" aria-label="页面目录">
         <div className="jump-card">
           <div className="jump-card-title"><span>目</span><div><strong>卷内导航</strong><small>PAGE INDEX</small></div></div>
           <nav>
-            {PAGE_SECTIONS.map((section, index) => (
-              <a key={section.id} href={`#${section.id}`} className={`jump-link ${activeSection === section.id ? 'active' : ''}`}>
-                <span className="jump-index">0{index + 1}</span>
-                <span><strong>{section.label}</strong><small>{section.note}</small></span>
-              </a>
-            ))}
+            {PAGE_SECTIONS.map((section, index) => {
+              const Icon = section.icon;
+              return (
+                <a key={section.id} href={`#${section.id}`} onClick={(event) => { event.preventDefault(); jumpToSection(section.id); }} className={`jump-link ${activeSection === section.id ? 'active' : ''}`}>
+                  <span className="jump-index"><Icon /><small>0{index + 1}</small></span>
+                  <span><strong>{section.label}</strong><small>{section.note}</small></span>
+                </a>
+              );
+            })}
           </nav>
         </div>
         <button type="button" className="jump-import" onClick={() => setOcrOpen(true)}>
