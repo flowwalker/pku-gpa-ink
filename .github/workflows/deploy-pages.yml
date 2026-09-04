@@ -51,6 +51,10 @@ jobs:
           kill "$WRANGLER_PID" 2>/dev/null || true
           test -s dist/client/index.html
           grep -q "/pku-gpa-ink/_next" dist/client/index.html
+          # vite 把 basePath 输出成了子目录，而 Pages 会把整个 artifact 再挂到
+          # /pku-gpa-ink/ 下；把 _next 上移一层避免 URL 出现双重前缀。
+          mv dist/client/pku-gpa-ink/_next dist/client/_next
+          rmdir dist/client/pku-gpa-ink
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
