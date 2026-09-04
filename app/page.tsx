@@ -39,6 +39,12 @@ const PROVIDER_NAMES: Record<string, string> = {
   siliconflow: '硅基流动',
 };
 
+const PAGE_SECTIONS = [
+  { id: 'overview', label: '绩点总览', note: '三种算法结果' },
+  { id: 'courses', label: '课程卷', note: '填写成绩与学分' },
+  { id: 'rules', label: '换算标准', note: '公式、等级与优秀线' },
+];
+
 const LETTER_SCORES: Record<string, number> = {
   'A+': 100,
   A: 100,
@@ -281,6 +287,7 @@ export default function Home() {
   const [aiProvider, setAiProvider] = useState('deepseek');
   const [visionModel, setVisionModel] = useState(PROVIDER_DEFAULT_MODELS.deepseek);
   const [apiKey, setApiKey] = useState('');
+  const [activeSection, setActiveSection] = useState(PAGE_SECTIONS[0].id);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -295,6 +302,19 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem('yanji-courses-v1', JSON.stringify(courses));
   }, [courses]);
+
+  useEffect(() => {
+    const updateActiveSection = () => {
+      const current = PAGE_SECTIONS
+        .map((section) => ({ id: section.id, top: document.getElementById(section.id)?.getBoundingClientRect().top ?? Infinity }))
+        .filter((section) => section.top <= 180)
+        .at(-1);
+      setActiveSection(current?.id ?? PAGE_SECTIONS[0].id);
+    };
+    updateActiveSection();
+    window.addEventListener('scroll', updateActiveSection, { passive: true });
+    return () => window.removeEventListener('scroll', updateActiveSection);
+  }, []);
 
   const metrics = useMemo(() => {
     const valid = courses.flatMap((course) => {
@@ -379,7 +399,7 @@ export default function Home() {
       <div className="ink-wash ink-wash-one" />
       <div className="ink-wash ink-wash-two" />
 
-      <header className="relative z-10 mx-auto flex w-[min(1180px,calc(100%-32px))] items-center justify-between py-7">
+      <header className="site-header relative z-10 mx-auto flex w-[min(1460px,calc(100%-32px))] items-center justify-between py-7">
         <div className="flex items-center gap-3">
           <div className="seal">绩</div>
           <div>
@@ -393,7 +413,8 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="relative z-10 mx-auto w-[min(1180px,calc(100%-32px))]">
+      <div className="page-layout relative z-10 mx-auto w-[min(1460px,calc(100%-32px))]">
+      <section className="page-content">
         <div className="mb-7">
           <p className="mb-2 font-serif-cn text-sm tracking-[0.32em] text-[#9a3a2a]">观分 · 知止 · 再进</p>
           <h1 className="hero-title font-serif-cn text-[clamp(2.35rem,6vw,5.7rem)] leading-[0.96] tracking-[-0.035em] text-[#102a26]">
@@ -401,7 +422,13 @@ export default function Home() {
           </h1>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3" aria-live="polite">
+        <nav className="mobile-jump-nav" aria-label="页面快捷导航">
+          {PAGE_SECTIONS.map((section) => (
+            <a key={section.id} href={`#${section.id}`} className={activeSection === section.id ? 'active' : ''}>{section.label}</a>
+          ))}
+        </nav>
+
+        <div id="overview" className="jump-target grid gap-4 md:grid-cols-3" aria-live="polite">
           {results.map((result, index) => {
             const assessment = level(result.score);
             return (
@@ -429,7 +456,7 @@ export default function Home() {
           })}
         </div>
 
-        <section className="paper-panel mt-5">
+        <section id="courses" className="jump-target paper-panel mt-5">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-serif-cn text-xl tracking-[0.06em]">课程卷</p>
@@ -480,7 +507,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="mt-5 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <section id="rules" className="jump-target mt-5 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
           <div className="formula-panel">
             <div><span>线性换算</span><strong>G₁ = x̄ / 25</strong></div>
             <div><span>抛物线换算</span><strong>G(x) = 4 − 3(x−100)² / 1600</strong></div>
@@ -495,6 +522,25 @@ export default function Home() {
 
         <p className="mt-6 text-center text-[11px] tracking-[0.1em] text-[#6f8580]">等级：A+/A/A− 100 · B+ 85 · B 81 · B− 77 · C+ 73 · C 70 · C− 67 · D+ 64 · D 62 · F 0</p>
       </section>
+
+      <aside className="jump-sidebar" aria-label="页面目录">
+        <div className="jump-card">
+          <div className="jump-card-title"><span>目</span><div><strong>卷内导航</strong><small>PAGE INDEX</small></div></div>
+          <nav>
+            {PAGE_SECTIONS.map((section, index) => (
+              <a key={section.id} href={`#${section.id}`} className={`jump-link ${activeSection === section.id ? 'active' : ''}`}>
+                <span className="jump-index">0{index + 1}</span>
+                <span><strong>{section.label}</strong><small>{section.note}</small></span>
+              </a>
+            ))}
+          </nav>
+        </div>
+        <button type="button" className="jump-import" onClick={() => setOcrOpen(true)}>
+          <Camera className="size-4" />
+          <span><strong>智能入卷</strong><small>识图或识文导入</small></span>
+        </button>
+      </aside>
+      </div>
 
       <Dialog open={ocrOpen} onOpenChange={setOcrOpen}>
         <DialogContent
