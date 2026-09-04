@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/dialog';
 
 type Course = { id: string; name: string; credit: string; grade: string };
+type Metrics = { credits: number; weightedScore: number; g1: number; g2: number; g3: number; g2Inverse: number };
 
 const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   deepseek: 'deepseek-v4-flash-vision-exp',
@@ -104,6 +105,22 @@ function parabola(score: number) {
 function inverseParabola(gpa: number) {
   if (gpa <= 0) return 0;
   return 100 - Math.sqrt(((4 - Math.min(gpa, 4)) * 1600) / 3);
+}
+
+function calculateMetrics(courses: Course[]): Metrics {
+  const valid = courses.flatMap((course) => {
+    const credit = Number(course.credit);
+    const parsed = parseGrade(course.grade);
+    if (parsed.excluded || parsed.score === null || !Number.isFinite(credit) || credit <= 0) return [];
+    return [{ credit, score: parsed.score }];
+  });
+  const credits = valid.reduce((sum, course) => sum + course.credit, 0);
+  if (!credits) return { credits: 0, weightedScore: 0, g1: 0, g2: 0, g3: 0, g2Inverse: 0 };
+  const weightedScore = valid.reduce((sum, course) => sum + course.score * course.credit, 0) / credits;
+  const g1 = weightedScore / 25;
+  const g2 = valid.reduce((sum, course) => sum + parabola(course.score) * course.credit, 0) / credits;
+  const g3 = parabola(weightedScore);
+  return { credits, weightedScore, g1, g2, g3, g2Inverse: inverseParabola(g2) };
 }
 
 function level(score: number) {
@@ -285,6 +302,11 @@ function ParticleField() {
 
 export default function Home() {
   const [courses, setCourses] = useState<Course[]>(DEFAULT_COURSES);
+  const [calculatedCourses, setCalculatedCourses] = useState<Course[]>(DEFAULT_COURSES);
+  const [displayMetrics, setDisplayMetrics] = useState<Metrics>(() => calculateMetrics(DEFAULT_COURSES));
+  const [charge, setCharge] = useState(100);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
   const [ocrOpen, setOcrOpen] = useState(false);
   const [ocrText, setOcrText] = useState('');
   const [ocrStatus, setOcrStatus] = useState('可上传成绩单截图交给 DeepSeek 识别，或直接粘贴课程文本。');
@@ -295,19 +317,33 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [activeSection, setActiveSection] = useState(PAGE_SECTIONS[0].id);
   const fileRef = useRef<HTMLInputElement>(null);
+  const calculationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem('yanji-courses-v1');
-      if (saved) setCourses(JSON.parse(saved));
+      const savedCalculated = localStorage.getItem('yanji-calculated-courses-v1');
+      const draftCourses = saved ? JSON.parse(saved) as Course[] : DEFAULT_COURSES;
+      const resultCourses = savedCalculated ? JSON.parse(savedCalculated) as Course[] : draftCourses;
+      setCourses(draftCourses);
+      setCalculatedCourses(resultCourses);
+      setDisplayMetrics(calculateMetrics(resultCourses));
     } catch {
       // Ignore malformed device-local data.
+    } finally {
+      setStorageReady(true);
     }
   }, []);
 
   useEffect(() => {
+    if (!storageReady) return;
     localStorage.setItem('yanji-courses-v1', JSON.stringify(courses));
-  }, [courses]);
+    localStorage.setItem('yanji-calculated-courses-v1', JSON.stringify(calculatedCourses));
+  }, [calculatedCourses, courses, storageReady]);
+
+  useEffect(() => () => {
+    if (calculationFrameRef.current !== null) cancelAnimationFrame(calculationFrameRef.current);
+  }, []);
 
   useEffect(() => {
     const updateActiveSection = () => {
@@ -322,35 +358,58 @@ export default function Home() {
     return () => window.removeEventListener('scroll', updateActiveSection);
   }, []);
 
-  const metrics = useMemo(() => {
-    const valid = courses.flatMap((course) => {
-      const credit = Number(course.credit);
-      const parsed = parseGrade(course.grade);
-      if (parsed.excluded || parsed.score === null || !Number.isFinite(credit) || credit <= 0) return [];
-      return [{ credit, score: parsed.score }];
-    });
-    const credits = valid.reduce((sum, course) => sum + course.credit, 0);
-    if (!credits) return { credits: 0, weightedScore: 0, g1: 0, g2: 0, g3: 0, g2Inverse: 0 };
-    const weightedScore = valid.reduce((sum, course) => sum + course.score * course.credit, 0) / credits;
-    const g1 = weightedScore / 25;
-    const g2 = valid.reduce((sum, course) => sum + parabola(course.score) * course.credit, 0) / credits;
-    const g3 = parabola(weightedScore);
-    return { credits, weightedScore, g1, g2, g3, g2Inverse: inverseParabola(g2) };
-  }, [courses]);
+  const hasPendingChanges = useMemo(
+    () => JSON.stringify(courses) !== JSON.stringify(calculatedCourses),
+    [calculatedCourses, courses],
+  );
 
   const results = [
-    { mark: '壹', title: '加权平均绩点', detail: '加权均分 ÷ 25', gpa: metrics.g1, score: metrics.g1 * 25, tone: 'jade' },
-    { mark: '贰', title: '逐科抛物线加权', detail: '各科先换算，再按学分平均', gpa: metrics.g2, score: metrics.g2 * 25, inverse: metrics.g2Inverse, tone: 'cinnabar' },
-    { mark: '叁', title: '均分后抛物线', detail: '加权均分后，再作抛物线换算', gpa: metrics.g3, score: metrics.g3 * 25, tone: 'ink' },
+    { mark: '壹', title: '加权平均绩点', detail: '加权均分 ÷ 25', gpa: displayMetrics.g1, score: displayMetrics.g1 * 25, tone: 'jade' },
+    { mark: '贰', title: '逐科抛物线加权', detail: '各科先换算，再按学分平均', gpa: displayMetrics.g2, score: displayMetrics.g2 * 25, inverse: displayMetrics.g2Inverse, tone: 'cinnabar' },
+    { mark: '叁', title: '均分后抛物线', detail: '加权均分后，再作抛物线换算', gpa: displayMetrics.g3, score: displayMetrics.g3 * 25, tone: 'ink' },
   ];
 
   const updateCourse = (id: string, key: keyof Omit<Course, 'id'>, value: string) => {
+    setCharge(0);
     setCourses((current) => current.map((course) => (course.id === id ? { ...course, [key]: value } : course)));
   };
 
   const addCourse = () => {
+    setCharge(0);
     setCourses((current) => [...current, { id: makeId(), name: '', credit: '', grade: '' }]);
     setTimeout(() => document.querySelector<HTMLInputElement>('tbody tr:last-child input')?.focus(), 0);
+  };
+
+  const runCalculation = () => {
+    if (calculationFrameRef.current !== null) cancelAnimationFrame(calculationFrameRef.current);
+    const snapshot = courses.map((course) => ({ ...course }));
+    const from = displayMetrics;
+    const target = calculateMetrics(snapshot);
+    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 80 : 620;
+    const startedAt = performance.now();
+    const keys: Array<keyof Metrics> = ['credits', 'weightedScore', 'g1', 'g2', 'g3', 'g2Inverse'];
+    setIsCalculating(true);
+    setCharge(0);
+
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const convergence = progress === 1 ? 1 : 1 - Math.exp(-5.5 * progress) * Math.cos(11 * progress);
+      const next = { ...from };
+      keys.forEach((key) => {
+        next[key] = Math.max(0, from[key] + (target[key] - from[key]) * convergence);
+      });
+      setDisplayMetrics(next);
+      setCharge(progress * 100);
+      if (progress < 1) {
+        calculationFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        setDisplayMetrics(target);
+        setCalculatedCourses(snapshot);
+        setIsCalculating(false);
+        calculationFrameRef.current = null;
+      }
+    };
+    calculationFrameRef.current = requestAnimationFrame(animate);
   };
 
   const jumpToSection = (id: string) => {
@@ -406,6 +465,7 @@ export default function Home() {
       setOcrStatus('仍未找到可导入的行。建议每行保持“课程名 学分 成绩”的顺序。');
       return;
     }
+    setCharge(0);
     setCourses(parsed);
     setOcrStatus(`已导入 ${parsed.length} 门课程。`);
     setOcrOpen(false);
@@ -451,7 +511,7 @@ export default function Home() {
           {results.map((result, index) => {
             const assessment = level(result.score);
             return (
-              <article key={result.mark} className={`result-card ${result.tone}`} style={{ animationDelay: `${index * 100}ms` }}>
+              <article key={result.mark} className={`result-card ${result.tone} ${isCalculating ? 'is-calculating' : ''}`} style={{ animationDelay: `${index * 70}ms` }}>
                 <div className="flex items-start justify-between gap-3">
                   <div><p className="font-serif-cn text-sm tracking-[0.12em] text-[#385c55]">{result.title}</p><p className="mt-1 text-[10px] text-[#78908a]">{result.detail}</p></div>
                   <span className="result-mark">{result.mark}</span>
@@ -459,12 +519,12 @@ export default function Home() {
                 <div className="mt-6 flex items-end justify-between gap-4">
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.22em] text-[#66817c]">GPA / 4.00</p>
-                    <p className="score-number">{result.gpa.toFixed(3)}</p>
+                    <p className={`score-number ${isCalculating ? 'calculating' : ''}`}>{result.gpa.toFixed(3)}</p>
                   </div>
                   <div className="pb-1 text-right">
                     <span className={`level-badge ${assessment.tone}`}>{assessment.label}</span>
                     <p className="mt-2 text-[10px] text-[#66817c]">绩点 × 25</p>
-                    <p className="font-serif-cn text-lg text-[#294c46]">{result.score.toFixed(2)}</p>
+                    <p className={`secondary-score font-serif-cn text-lg text-[#294c46] ${isCalculating ? 'calculating' : ''}`}>{result.score.toFixed(2)}</p>
                   </div>
                 </div>
                 {'inverse' in result && (
@@ -475,16 +535,33 @@ export default function Home() {
           })}
         </div>
 
+        <section className={`calculation-console ${isCalculating ? 'is-calculating' : ''} ${hasPendingChanges ? 'has-pending' : 'is-ready'}`} aria-label="绩点演算">
+          <div className="calculation-copy">
+            <span>CALCULATION RITE</span>
+            <strong>{isCalculating ? '三式汇流，正在演算' : hasPendingChanges ? '卷面已有修改，等待演算' : '本轮演算已经完成'}</strong>
+            <small>{hasPendingChanges ? '上方结果暂时保持不变' : `已纳入 ${displayMetrics.credits.toFixed(1)} 学分`}</small>
+          </div>
+          <button type="button" className="calculation-knob" onClick={runCalculation} disabled={isCalculating} aria-label="开始计算绩点">
+            <span className="knob-ring" aria-hidden="true" />
+            <span className="knob-core"><Calculator /><b>{isCalculating ? '演算中' : '计算'}</b></span>
+          </button>
+          <div className="charge-module" aria-live="polite">
+            <div className="charge-meta"><span>能量注入</span><strong>{Math.round(charge)}%</strong></div>
+            <div className="charge-track"><span style={{ width: `${charge}%` }} /></div>
+            <small>{isCalculating ? '数字正在收敛' : charge === 100 ? '结果稳定' : '等待启动旋钮'}</small>
+          </div>
+        </section>
+
         <section id="courses" className="jump-target paper-panel mt-5">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-serif-cn text-xl tracking-[0.06em]">课程卷</p>
-              <p className="mt-1 text-xs text-[#66817c]">已计入 {metrics.credits.toFixed(1)} 学分 · 修改即重算 · 自动保存在本机</p>
+              <p className="mt-1 text-xs text-[#66817c]">已演算 {displayMetrics.credits.toFixed(1)} 学分 · 输入不会自动重算 · 自动保存在本机</p>
             </div>
             <div className="flex gap-2">
               <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple className="sr-only" onChange={(event) => handleImage(event.target.files || undefined)} />
-              <Button variant="outline" className="ink-button" onClick={() => setOcrOpen(true)}><Camera />智能导入</Button>
-              <Button className="cinnabar-button" onClick={addCourse}><Plus />添一门课</Button>
+              <Button variant="outline" className="ink-button" disabled={isCalculating} onClick={() => setOcrOpen(true)}><Camera />智能导入</Button>
+              <Button className="cinnabar-button" disabled={isCalculating} onClick={addCourse}><Plus />添一门课</Button>
             </div>
           </div>
 
@@ -500,15 +577,15 @@ export default function Home() {
                   const valid = parsed.excluded || (parsed.score !== null && creditOk);
                   return (
                     <tr key={course.id} className="course-row">
-                      <td><Input aria-label="课程名称" value={course.name} placeholder="课程名称" onChange={(event) => updateCourse(course.id, 'name', event.target.value)} className="table-input" /></td>
-                      <td><Input aria-label="学分" inputMode="decimal" value={course.credit} placeholder="3" onChange={(event) => updateCourse(course.id, 'credit', event.target.value)} className="table-input text-center" /></td>
-                      <td><Input aria-label="成绩或等级" value={course.grade} placeholder="90 / A- / EX" onChange={(event) => updateCourse(course.id, 'grade', event.target.value)} className="table-input text-center font-medium uppercase" /></td>
+                      <td><Input aria-label="课程名称" disabled={isCalculating} value={course.name} placeholder="课程名称" onChange={(event) => updateCourse(course.id, 'name', event.target.value)} className="table-input" /></td>
+                      <td><Input aria-label="学分" disabled={isCalculating} inputMode="decimal" value={course.credit} placeholder="3" onChange={(event) => updateCourse(course.id, 'credit', event.target.value)} className="table-input text-center" /></td>
+                      <td><Input aria-label="成绩或等级" disabled={isCalculating} value={course.grade} placeholder="90 / A- / EX" onChange={(event) => updateCourse(course.id, 'grade', event.target.value)} className="table-input text-center font-medium uppercase" /></td>
                       <td className="text-center">
                         <span className={`status-chip ${parsed.excluded ? 'excluded' : valid ? 'included' : 'invalid'}`}>
                           {parsed.excluded ? '排除' : valid ? '计入' : '待填'}
                         </span>
                       </td>
-                      <td><Button size="icon-sm" variant="ghost" aria-label={`删除${course.name || '课程'}`} className="text-[#8ba09b] hover:text-[#9e3e2f]" onClick={() => setCourses((current) => current.filter((item) => item.id !== course.id))}><Trash2 /></Button></td>
+                      <td><Button size="icon-sm" variant="ghost" disabled={isCalculating} aria-label={`删除${course.name || '课程'}`} className="text-[#8ba09b] hover:text-[#9e3e2f]" onClick={() => { setCharge(0); setCourses((current) => current.filter((item) => item.id !== course.id)); }}><Trash2 /></Button></td>
                     </tr>
                   );
                 })}
@@ -522,7 +599,7 @@ export default function Home() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#294f47]/10 pt-4">
             <div className="flex items-center gap-2 text-xs text-[#607b75]"><Info className="size-3.5" />EX / P / IP 排除；低于 60 分的抛物线绩点记为 0</div>
-            <Button variant="ghost" size="sm" className="text-[#718781]" onClick={() => setCourses(DEFAULT_COURSES)}><RotateCcw />恢复示例</Button>
+            <Button variant="ghost" size="sm" disabled={isCalculating} className="text-[#718781]" onClick={() => { setCharge(0); setCourses(DEFAULT_COURSES); }}><RotateCcw />恢复示例</Button>
           </div>
         </section>
 
